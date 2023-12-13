@@ -1,0 +1,22 @@
+SET PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.0\bin;%PATH%
+SET PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.0\extras\CUPTI\lib64;%PATH%
+SET PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.0\include;%PATH%
+SET PATH=C:\tools\cuda\bin;%PATH%
+
+
+CUDA 12
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.2\bin
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.2\extras\CUPTI\lib64
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.2\include
+
+C:\tools\cudnn-windows-x86_64-8.9.5.29_cuda12-archive\bin
+C:\tools\cudnn-windows-x86_64-8.9.5.29_cuda12-archive\include
+
+
+CUDA 11
+
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5\bin
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5\extras\CUPTI\lib64
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5\extras\CUPTI\include
+C:\tools\cudnn-windows-x86_64-8.9.5.29_cuda11-archive\bin
+C:\tools\cudnn-windows-x86_64-8.9.5.29_cuda11-archive\include
