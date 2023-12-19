@@ -43,11 +43,16 @@ def enviar_promt_chat_completions_mode(
     else: return respuesta.choices[0].message.content
 
 
-def BBDD_to_text_df(table_name:str, bbdd_name:str, user:str = 'postgres', password:str= '123', puerto:str='5432'):
-    import pandas as pd
+def conect_to_bbdd(bbdd_name, user, password, host= 'localhost' ,port= '5432'): 
     from sqlalchemy import create_engine
+    return create_engine(f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{bbdd_name}")
 
-    engine = create_engine(f"postgresql+psycopg2://{user}:{password}@localhost:{puerto}/{bbdd_name}")
+
+def BBDD_to_text_df(table_name:str, bbdd_name:str,password:str, 
+                    user:str, host:str= 'localhost', puerto:str='5432'):
+    
+    import pandas as pd
+    engine = conect_to_bbdd(bbdd_name=bbdd_name, user= user, password=password, host= host, port=puerto)
 
     try: 
         consulta_sql = f"SELECT * FROM {table_name}"          # crear la consulta
@@ -62,16 +67,17 @@ def BBDD_to_text_df(table_name:str, bbdd_name:str, user:str = 'postgres', passwo
 
     return df_text    #, df                # se podria devolver tambien el df original 
 
-def nlp_BBBD_text_df(consulta_nlp:str, bbdd_name:str, user:str = 'postgres', password:str= '123', puerto:str='5432'):
+
+def nlp_BBBD_text_df(consulta_nlp:str, bbdd_name:str, password:str, 
+                     user:str, puerto:str='5432', host= 'localhost'):
     '''
     Esta función recibe una consulta en lenguaje natural y la formatea a codigo SQL para 
     luego devolver una tabla en formato texto y que la api de chat completions de openai 
     pueda procesar esa tabla.
     '''
     import pandas as pd
-    from sqlalchemy import create_engine
 
-    engine = create_engine(f"postgresql+psycopg2://{user}:{password}@localhost:{puerto}/{bbdd_name}")
+    engine = conect_to_bbdd(bbdd_name=bbdd_name, user= user, password=password, host= host, port=puerto)
 
     try: 
 
@@ -99,29 +105,59 @@ def nlp_BBBD_text_df(consulta_nlp:str, bbdd_name:str, user:str = 'postgres', pas
 
     return df_text    
 
+
+def store_simple_metadata_in_json_str(engine):
+    from   sqlalchemy import MetaData
+    import json
+    metadata = MetaData()       # MetaData es un contenedor que mantiene información sobre las tablas y modelos en una base de datos.
+    metadata.reflect(engine)    # Cargar la información de la base de datos incluyendo 
+
+    tablas_columnas = {table.name: [column.name for column in table.columns] for table in metadata.tables.values()}
+    
+    return json.dumps(tablas_columnas, indent= 4)
+    
+
+def store_full_metadata_in_json_str(engine):
+    from   sqlalchemy import MetaData
+    import json
+    metadata = MetaData()       # MetaData es un contenedor que mantiene información sobre las tablas y modelos en una base de datos.
+    metadata.reflect(engine)    # Cargar la información de la base de datos incluyendo 
+    
+    metadatos = {}
+    for table in metadata.tables.values():
+            # Por cada tabla, se almacena información detallada de sus columnas en el diccionario 'tablas_columnas'.
+            # Se crea una clave en el diccionario para cada nombre de tabla.
+        metadatos[table.name] = {                                     
+        "columnas": {column.name: {                                   # dentro de cada tabla se crea un diccionario de 
+                        "tipo": str(column.type),                     # Tipo de dato de la columna.
+                        "nulo": column.nullable,                      # Booleano que indica si la columna acepta valores nulos.
+                        "clave_primaria": column.primary_key,         # Booleano que indica si la columna es una clave primaria
+                        "clave_foranea": bool(column.foreign_keys)}   # Booleano que indica si la columna es una clave foránea.
+                    for column in table.columns}                      # Este bucle interno itera a través de todas las columnas de la tabla.
+            }
+    return json.dumps(metadatos, indent= 4)
+
+
 def nlp_to_BBBD_with_metadata_to_text_df(
-        consulta_nlp:str, bbdd_name:str, user:str = 'postgres', 
-        password:str= '123', puerto:str='5432'):
+        consulta_nlp:str, bbdd_name:str, password:str, 
+        user:str, puerto:str='5432', host= 'localhost'):
     '''
     Esta función recibe una consulta en lenguaje natural y la formatea a codigo SQL para 
     luego devolver una tabla en formato texto y que la api de chat completions de openai 
     pueda procesar esa tabla. PROPORCIONA INFO DE LOS METADATOS DE LA BBDD AL ASISTENTE
     '''
     import pandas as pd
-    from  sqlalchemy import create_engine, MetaData
-    import json
     import re
     
     try: 
-        engine = create_engine(f"postgresql+psycopg2://{user}:{password}@localhost:{puerto}/{bbdd_name}")
-        metadata = MetaData()
-        metadata.reflect(engine)
-        tablas_columnas= {table.name: [column.name for column in table.columns] for table in metadata.tables.values()}
-        tablas_columnas_json_str = json.dumps(tablas_columnas, indent= 4)
+        # creacion del motor de conexion a la BBDD via SQL para postgresql
+        engine = conect_to_bbdd(bbdd_name=bbdd_name, user= user, password=password, host= host, port=puerto)
+
+        metadatos_json_str = store_full_metadata_in_json_str(engine= engine)
 
         mi_prompt = [
         {'role': 'system', 'content': f'Eres un asistente experto en bases de datos, que convierte peticiones de lenguaje natural a código SQL.\
-                                       AQUI TIENES LO METADATOS DE LA BASE DE DATOS: \n{tablas_columnas_json_str}'},      
+                                       AQUI TIENES LO METADATOS DE LA BASE DE DATOS: \n{metadatos_json_str}'},      
         {'role': 'user',   'content': f'{consulta_nlp}'},
         {'role': 'assistant', 'content': 'Devuélveme SOLO EL CODIGO SQL y en este formato: \n```sql\nEL CODIGO SQL;\n```'}
         ]
@@ -147,7 +183,6 @@ def nlp_to_BBBD_with_metadata_to_text_df(
     except Exception as e: 
         print(f"La consulta dio el siguiente error: \n{e}")
 
-     
     engine.dispose()                                      # cerrar la conexion de forma segura
 
     return df_text    
