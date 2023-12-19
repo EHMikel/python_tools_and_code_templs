@@ -1,1 +1,3 @@
-config.py
+# la api key de openai en archivo config.py
+
+\openai_API\config.py
