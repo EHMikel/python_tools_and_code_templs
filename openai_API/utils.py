@@ -1,7 +1,15 @@
 import openai                                                               # importamos 
 import os
+import pandas as pd
+import numpy as np
+from dotenv import load_dotenv
 
-#openai.api_key = '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'     # fijamos la clave
+# Cargar variables de entorno desde .env
+load_dotenv()
+
+# Acceder a la API key
+api_key = os.getenv("API_KEY")
+openai.api_key = api_key
 
 
 def enviar_promt_completions_mode(
@@ -21,7 +29,7 @@ def enviar_promt_completions_mode(
         presence_penalty= presence_penalty      # con que un token aparezca una vez ya recibe penalización
     )
 
-    return respuesta.choices[0].text.strip()    # el indice donde esta la respuesta de nuestro modelo
+    return respuesta.choices[0].text#.strip()    # el indice donde esta la respuesta de nuestro modelo
 
 
 def enviar_promt_chat_completions_mode(
@@ -66,10 +74,8 @@ def BBDD_to_text_df(table_name:str, bbdd_name:str,password:str,
     except Exception as e: 
         print(f"La consulta dio el siguiente error: \n{e}")
 
-    finally: 
-        engine.dispose()                                      # cerrar la conexion de forma segura
-
-    return df_text    #, df                # se podria devolver tambien el df original 
+    engine.dispose()             # cerrar la conexion de forma segura
+    return df_text               # se podria devolver tambien el df original 
 
 
 def nlp_BBBD_text_df(consulta_nlp:str, bbdd_name:str, password:str, 
@@ -110,27 +116,38 @@ def nlp_BBBD_text_df(consulta_nlp:str, bbdd_name:str, password:str,
     return df_text    
 
 
-def get_embedding(texto, model= "text-embedding-ada-002"):
+def get_embedding(texto, model= "text-embedding-ada-002") -> list:
     text = texto.replace('\n', ' ')
     respuesta = openai.embeddings.create(input= text, model= model)
     return respuesta.data[0].embedding
 
 
-def cosine_similarity(embedding1, embedding2): 
+def cosine_similarity(embedding1, embedding2) -> float: 
     #print(type(embedding1), type(embedding2))
     import numpy as np
     from numpy.linalg import norm
     cos_sim = np.dot(embedding1, embedding2)/(norm(embedding1)*norm(embedding2))
     return cos_sim
 
-def buscar_metadata_mas_similar(prompt, metadata, n_resulatdos= 5): 
-    prompt_embedding = get_embedding(prompt)                                                       # se extrae el embedding de la pregunta del usuario
+
+def search_most_similar_md(prompt, metadata, n_resultados= None, lim_tokens= None) -> pd.DataFrame: 
+
+    prompt_embedding = get_embedding(prompt)                                                                # se extrae el embedding de la pregunta del usuario
     metadata['similarity']= metadata['embedding'].apply(lambda x: cosine_similarity(x, prompt_embedding))   # se saca la similitud de la pregunta con las posibles respuestas
-    metadata = metadata.sort_values('similarity', ascending= False)                                             # los ordena de mayor similitud a menor
-    return metadata.iloc[:n_resulatdos][['metadata_str', 'similitud', 'embedding']]
+    metadata = metadata.sort_values('similarity', ascending= False)   
+
+    if n_resultados == None: 
+        n_resultados = len(metadata)
+    
+    metadata_mas_similar = metadata.iloc[:n_resultados][['metadata_str', 'md_str_tokens','similarity', 'embedding']]
+    metadata_mas_similar['token_cumsum'] = np.cumsum(metadata_mas_similar['md_str_tokens'])
+
+    if lim_tokens == None: return metadata_mas_similar
+    else:                  return metadata_mas_similar[metadata_mas_similar['token_cumsum'] <= lim_tokens]
 
 
-def store_simple_metadata_in_json_str(engine):
+def simple_md_in_json_str(engine) -> str:
+
     from   sqlalchemy import MetaData
     import json
     metadata = MetaData()       # MetaData es un contenedor que mantiene información sobre las tablas y modelos en una base de datos.
@@ -141,7 +158,7 @@ def store_simple_metadata_in_json_str(engine):
     return json.dumps(tablas_columnas, indent= 4)
     
 
-def store_full_metadata_in_json_str(engine):
+def full_md_in_json_str(engine)-> str:
     from   sqlalchemy import MetaData
     import json
     metadata = MetaData()       # MetaData es un contenedor que mantiene información sobre las tablas y modelos en una base de datos.
@@ -162,12 +179,13 @@ def store_full_metadata_in_json_str(engine):
     return json.dumps(metadatos, indent= 4)
 
 
-def full_metadata_pipeline(engine):
+def full_md_extraction_pipeline(engine) -> pd.DataFrame:
+
     from sqlalchemy import MetaData
     import json
     import pandas as pd
     import numpy as np
-    import openai
+    from calcular_tokens import num_tokens_from_string
 
     metadata = MetaData()     # MetaData es un contenedor que mantiene información sobre las tablas y modelos en una base de datos.
     metadata.reflect(engine)  # Cargar la información de la base de datos
@@ -189,66 +207,83 @@ def full_metadata_pipeline(engine):
             metadatos_tabla.append(str_md_columna)          # Añadir los metadatos y embedding de cada columna a la lista
 
         metadatos_tabla_str = 'table_name:' + table.name + '\n' + '\n'.join([str_md_col for str_md_col in metadatos_tabla])
+        metadata_str_tokens = num_tokens_from_string(metadatos_tabla_str)
         
-        md_embedding = np.array(get_embedding(texto=metadatos_tabla_str))  # calculo el embedding de los metadatos
-        metadatos[table.name] = [metadatos_tabla_str, md_embedding]        # Añadir los metadatos de la tabla al diccionario
+        md_embedding = np.array(get_embedding(texto=metadatos_tabla_str))                       # calculo el embedding de los metadatos
+        metadatos[table.name] = [metadatos_tabla_str, metadata_str_tokens, md_embedding]        # Añadir los metadatos de la tabla al diccionario
 
     md_df = pd.DataFrame(metadatos)
-    md_df.index = ['metadata_str', 'embedding']     # set_index(keys= ['metadata_str', 'embedding'])
-    md_df = md_df.T                                 #.reset_index(drop= True, inplace= True)
+    md_df.index = ['metadata_str', 'md_str_tokens','embedding']     # set_index(keys= ['metadata_str', 'embedding'])
+    md_df = md_df.T                                                  #.reset_index(drop= True, inplace= True)
     
     return md_df
 
 
-def simple_metadata_pipeline(engine):
+def simple_md_extraction_pipeline(engine)-> pd.DataFrame:
 
     from   sqlalchemy import MetaData
     import json
     import numpy as np
     import pandas as pd
+    from calcular_tokens import num_tokens_from_string
 
     metadata = MetaData()       # MetaData es un contenedor que mantiene información sobre las tablas y modelos en una base de datos.
     metadata.reflect(engine)    # Cargar la información de la base de datos incluyendo 
-    metadatos = {}
-
-    #tablas_columnas = {table.name: [column.name for column in table.columns] for table in metadata.tables.values()}
-    #md_str = '\n'.join([table_name + ':' + columns for table_name, columns in tablas_columnas.items()])
+    metadatos = {}              # aqui guardaré los metadatos finales. sera un diccionario de listas donde guardare el str, su embedding y la cantidad de tokens
 
     for table in metadata.tables.values():
-        md = {}
-        col_names = [column.name for column in table.columns]
-        md[table.name] = col_names
-        md_str = json.dumps(md)
-        md_embedding = np.array(get_embedding(texto= md_str))
-        metadatos[table.name] = [md_str, md_embedding]
+        md = {}                                                               # dict de la tabla actual -> nombre_tabla:nombre_columnas
+        col_names = [column.name for column in table.columns]                 # guardo los nombres de las columnas de cada tabla
+        md[table.name] = col_names                                            # lo meto en el dict de la tabla actual
+        md_str = json.dumps(md)                                               # lo paso a str
+        metadata_str_tokens = num_tokens_from_string(md_str)                  # calculo los tokens de este str
+        md_embedding = np.array(get_embedding(texto= md_str))                 # extraigo el embedding en formato np array
+        metadatos[table.name] = [md_str, metadata_str_tokens, md_embedding]   # guardo el str, el embedding y los tokens 
 
-    
-    md_df = pd.DataFrame(metadatos)
-    md_df.index = ['metadata_str', 'embedding']     # set_index(keys= ['metadata_str', 'embedding'])
-    md_df = md_df.T                                 #.reset_index(drop= True, inplace= True)
+    md_df = pd.DataFrame(metadatos)                                  # pasamos el diccionario a df
+    md_df.index = ['metadata_str', 'md_str_tokens','embedding']      # manipulamos los indices
+    md_df = md_df.T                                                  # cambiamos indices por columnas
     
     return md_df
 
-# def store_metadata_df_to_pickle(bbdd_name, user, password, host= 'localhost', port= '5432'):
 
-#     import os
-#     path = 'data/'
-#     name = bbdd_name
-#     formato = '.pickle'
+def store_metadata_df_to_pickle(bbdd_name, user, password, host= 'localhost', port= '5432'):
 
-#     if not os.path.exists(path + name + '_metadata' + formato):
+    import os
 
-#         engine = conect_to_bbdd(bbdd_name=name, user= user, password=password, host= host, port= port)
-#         metadata_df = metadata_pipeline(engine)
-#         close_conection(engine)
-#         # display(metadata_df)
-#         # print(metadata_df.info)
-#         metadata_df.to_pickle(path + name + '_metadata')
+    path = 'data/'                                       # en mi directorio actual dentro de data
+    name_simple = bbdd_name + '_simple_metadata.pickle'  # archivo de metadatos simple
+    name_full = bbdd_name + '_full_metadata.pickle'      # archivo de metadatos complejos
+    names = [name_simple, name_full]                     # listamos los nombres de los archivos
 
-#     else: 
-#         print(f'el archivo ya existe en: {path}, con el nombre: {name}_metadata{formato}')
+    engine = conect_to_bbdd(bbdd_name=bbdd_name, user= user, password=password, host= host, port= port)
 
-#     return None
+    for name in names:                             # para cada nombre de archivo
+
+        full_path = os.path.join(path, name)       # establece el path completo
+        if not os.path.exists(full_path):          # si el archivo no existe actualmente en el path
+
+            if 'simple' in name:                                   # si la palabra simple esta en el name aplico este pipeline
+
+                simple_md_df = simple_md_extraction_pipeline(engine)  # extraemos los metadatos simples
+                simple_md_df.to_pickle(full_path)                     # guardamos los metadatos simples en formato pickle
+                print(f"Archivo guardado: {full_path}")
+
+            elif 'full' in name:                                   # si la palabra full esta en el name aplico este pipeline
+                full_md_df = full_md_extraction_pipeline(engine)   # extraemos los metadatos completos
+                full_md_df.to_pickle(full_path)                    # lo guardamos como pickle en el path
+                print(f"Archivo guardado: {full_path}")
+
+        else:                                                       # si el archivo ya existe en el path
+            print(f'El archivo ya existe: {full_path}')
+
+    close_conection(engine)                                         # cerramos la conexion
+    return f"Proceso de almacenamiento de metadatos para {bbdd_name} completado."
+
+
+def get_string_from_metadata_df(metadata_df) -> str:
+    # mi_string = '\n'.join(metadata_df['metadata_str'].fillna(''))
+    return metadata_df['metadata_str'].fillna('').str.cat(sep= '\n')
 
 
 def nlp_to_BBBD_with_metadata_to_text_df(
@@ -265,8 +300,7 @@ def nlp_to_BBBD_with_metadata_to_text_df(
     try: 
         # creacion del motor de conexion a la BBDD via SQL para postgresql
         engine = conect_to_bbdd(bbdd_name=bbdd_name, user= user, password=password, host= host, port=puerto)
-
-        metadatos_json_str = store_full_metadata_in_json_str(engine= engine)
+        metadatos_json_str = full_md_in_json_str(engine= engine)
 
         mi_prompt = [
         {'role': 'system', 'content': f'Eres un asistente experto en bases de datos, que convierte peticiones de lenguaje natural a código SQL.\
@@ -295,6 +329,66 @@ def nlp_to_BBBD_with_metadata_to_text_df(
     
     except Exception as e: 
         print(f"La consulta dio el siguiente error: \n{e}")
+
+    engine.dispose()                                      # cerrar la conexion de forma segura
+
+    return df_text   
+
+
+def nlp_to_BBBD_with_metadata_to_text_df_2(
+        consulta_nlp:str,  
+        bbdd_name:str, password:str, user:str, port:str='5432', host= 'localhost', 
+        metadata_mode:str= 'simple', n_tablas:int  = None, max_tokens:int = None):
+    '''
+    Esta función recibe una consulta en lenguaje natural y la formatea a codigo SQL para 
+    luego devolver una tabla en formato texto y que la api de chat completions de openai 
+    pueda procesar esa tabla. PROPORCIONA INFO DE LOS METADATOS DE LA BBDD AL ASISTENTE
+    '''
+    import pandas as pd
+    import re
+    
+    try: 
+        # creacion del motor de conexion a la BBDD via SQL para postgresql
+        engine = conect_to_bbdd(bbdd_name=bbdd_name, user= user, password=password, host= host, port=port)
+        #metadatos_json_str = full_md_in_json_str(engine= engine)
+
+        store_metadata_df_to_pickle(bbdd_name=bbdd_name, user= user, password=password, host=host, port= port)
+
+        if metadata_mode=='full':  metadata = pd.read_pickle('data/' + bbdd_name +'_full_metadata.pickle')
+        else:                      metadata = pd.read_pickle('data/',+ bbdd_name +'_simple_metadata.pickle')
+
+        md_mas_similar = search_most_similar_md(consulta_nlp, metadata, n_resultados= n_tablas, lim_tokens= max_tokens)
+        metadatos_str = get_string_from_metadata_df(md_mas_similar)
+        
+
+        mi_prompt = [
+        {'role': 'system', 'content': f'Eres un asistente experto en bases de datos, que convierte peticiones de lenguaje natural a código SQL.\
+                                       AQUI TIENES LO METADATOS DE LA BASE DE DATOS: \n{metadatos_str}'},      
+        {'role': 'user',   'content': f'{consulta_nlp}'},
+        {'role': 'assistant', 'content': 'Devuélveme SOLO EL CODIGO SQL y en este formato: \n```sql\nEL CODIGO SQL;\n```'}
+        ]
+
+        respuesta_sql = enviar_promt_chat_completions_mode(
+            mensaje=mi_prompt, 
+            probabilidad_acumulada=1, 
+            aleatoriedad=0)
+        
+        regex_pattern = r"```sql\n(.*?;)\n```" 
+        coincidencia = re.search(regex_pattern, respuesta_sql, re.DOTALL)
+
+        if coincidencia:
+            codigo_sql = coincidencia.group(1).strip()  # .strip() para eliminar espacios extra
+            #print(codigo_sql)
+        else:
+            raise KeyError("no se encontro codigo sql en la consulta")
+
+        # codigo_sql = respuesta_sql[7:-4]                  # extraigo la parte de código de la respuesta
+        df = pd.read_sql(codigo_sql, engine)                # read_sql para pasar la consulta a dataframe
+        df_text = df.to_markdown()
+    
+    except Exception as e: 
+        print(e)
+        return f"La consulta dio el siguiente error: \n{e}"
 
     engine.dispose()                                      # cerrar la conexion de forma segura
 

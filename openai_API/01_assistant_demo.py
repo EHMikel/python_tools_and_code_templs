@@ -1,9 +1,14 @@
 import time
-import config
 import openai
-api = config.OPENAI_API_KEY
-#  KEY ='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'
-openai.api_key = api 
+import os
+from dotenv import load_dotenv
+
+# Cargar variables de entorno desde .env
+load_dotenv()
+
+# Acceder a la API key
+api_key = os.getenv("API_KEY")
+openai.api_key = api_key
 
 # gets API Key from environment variable OPENAI_API_KEY
 # client = openai.OpenAI()
