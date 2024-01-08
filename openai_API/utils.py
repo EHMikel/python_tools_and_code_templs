@@ -55,6 +55,7 @@ def conect_to_bbdd(bbdd_name, user, password, host= 'localhost' ,port= '5432'):
     from sqlalchemy import create_engine
     return create_engine(f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{bbdd_name}")
 
+
 def close_conection(engine): 
     engine.dispose()
     return None
@@ -136,8 +137,8 @@ def search_most_similar_md(prompt, metadata, n_resultados= None, lim_tokens= Non
     metadata['similarity']= metadata['embedding'].apply(lambda x: cosine_similarity(x, prompt_embedding))   # se saca la similitud de la pregunta con las posibles respuestas
     metadata = metadata.sort_values('similarity', ascending= False)   
 
-    if n_resultados == None: 
-        n_resultados = len(metadata)
+    if n_resultados == None:           n_resultados = len(metadata)
+    elif n_resultados > len(metadata): n_resultados = len(metadata)
     
     metadata_mas_similar = metadata.iloc[:n_resultados][['metadata_str', 'md_str_tokens','similarity', 'embedding']]
     metadata_mas_similar['token_cumsum'] = np.cumsum(metadata_mas_similar['md_str_tokens'])
@@ -156,7 +157,7 @@ def simple_md_in_json_str(engine) -> str:
     tablas_columnas = {table.name: [column.name for column in table.columns] for table in metadata.tables.values()}
     
     return json.dumps(tablas_columnas, indent= 4)
-    
+
 
 def full_md_in_json_str(engine)-> str:
     from   sqlalchemy import MetaData
@@ -355,7 +356,7 @@ def nlp_to_BBBD_with_metadata_to_text_df_2(
         store_metadata_df_to_pickle(bbdd_name=bbdd_name, user= user, password=password, host=host, port= port)
 
         if metadata_mode=='full':  metadata = pd.read_pickle('data/' + bbdd_name +'_full_metadata.pickle')
-        else:                      metadata = pd.read_pickle('data/',+ bbdd_name +'_simple_metadata.pickle')
+        else:                      metadata = pd.read_pickle('data/'+ bbdd_name +'_simple_metadata.pickle')
 
         md_mas_similar = search_most_similar_md(consulta_nlp, metadata, n_resultados= n_tablas, lim_tokens= max_tokens)
         metadatos_str = get_string_from_metadata_df(md_mas_similar)
@@ -372,14 +373,16 @@ def nlp_to_BBBD_with_metadata_to_text_df_2(
             mensaje=mi_prompt, 
             probabilidad_acumulada=1, 
             aleatoriedad=0)
-        
+
         regex_pattern = r"```sql\n(.*?;)\n```" 
         coincidencia = re.search(regex_pattern, respuesta_sql, re.DOTALL)
 
         if coincidencia:
             codigo_sql = coincidencia.group(1).strip()  # .strip() para eliminar espacios extra
-            #print(codigo_sql)
+            print(codigo_sql, '\n')
         else:
+            
+            print('\n',respuesta_sql,'\n')
             raise KeyError("no se encontro codigo sql en la consulta")
 
         # codigo_sql = respuesta_sql[7:-4]                  # extraigo la parte de código de la respuesta
@@ -391,5 +394,4 @@ def nlp_to_BBBD_with_metadata_to_text_df_2(
         return f"La consulta dio el siguiente error: \n{e}"
 
     engine.dispose()                                      # cerrar la conexion de forma segura
-
     return df_text    
