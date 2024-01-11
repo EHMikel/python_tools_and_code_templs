@@ -1,3 +1,6 @@
 # la api key de openai en archivo config.py
 
 openai_API/.env
+
+# ignorar la carpeta trabajos sucios
+pruebas_en_sucio/
